@@ -1,0 +1,18 @@
+# python
+.venv/
+__pycache__/
+*.pyc
+
+# local config
+.venv
+
+# editors / IDE
+.idea/
+.vscode/
+
+# data
+data/raw/*
+!data/raw/.gitkeep
+
+# misc
+.DS_Store
