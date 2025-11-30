@@ -124,6 +124,15 @@ SELECT *
 FROM mart.mart_mrr_over_time
 ORDER BY month;
 ```
+---
+
+## Data
+
+This project uses the **SaaS Subscription & Churn Analytics** dataset (“RavenStack”) from Kaggle:
+
+- Kaggle: https://www.kaggle.com/datasets/rivalytics/saas-subscription-and-churn-analytics-dataset
+
+RavenStack is a fictional AI-powered collaboration platform, but the dataset is designed to look like a real B2B SaaS business, with accounts, subscriptions, feature usage, support tickets and churn events.
 
 ---
 
