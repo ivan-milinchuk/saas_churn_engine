@@ -21,8 +21,8 @@ acct_deltas AS (
 exp_con AS (
   SELECT
     month,
-    SUM(CASE WHEN prev_mrr > 0 AND mrr > 0 AND delta > 0 THEN delta ELSE 0 END)     AS expansion_mrr,
-    SUM(CASE WHEN prev_mrr > 0 AND mrr > 0 AND delta < 0 THEN -delta ELSE 0 END)    AS contraction_mrr
+    SUM(CASE WHEN prev_mrr > 0 AND mrr > 0 AND delta > 0 THEN delta ELSE 0 END)  AS expansion_mrr,
+    SUM(CASE WHEN prev_mrr > 0 AND mrr > 0 AND delta < 0 THEN -delta ELSE 0 END) AS contraction_mrr
   FROM acct_deltas
   GROUP BY 1
 ),
@@ -46,8 +46,8 @@ final AS (
     e.month,
     LAG(e.ending_mrr) OVER (ORDER BY e.month) AS starting_mrr,
     nc.new_mrr,
-    COALESCE(ec.expansion_mrr, 0) AS expansion_mrr,
-    COALESCE(ec.contraction_mrr, 0) AS contraction_mrr,
+    COALESCE(ec.expansion_mrr, 0)    AS expansion_mrr,
+    COALESCE(ec.contraction_mrr, 0)  AS contraction_mrr,
     nc.churned_mrr,
     e.ending_mrr
   FROM ending e
