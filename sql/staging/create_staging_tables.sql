@@ -1,89 +1,84 @@
--- staging_accounts
-DROP TABLE IF EXISTS staging.staging_accounts CASCADE;
-CREATE TABLE staging.staging_accounts AS
-SELECT
-    account_id,
-    account_name,
-    industry,
-    country,
-    signup_date,
-    referral_source,
-    plan_tier      AS initial_plan_tier,
-    seats          AS initial_seats,
-    is_trial       AS initial_is_trial,
-    churn_flag     AS ever_churned
-FROM raw.raw_accounts;
+DROP TABLE IF EXISTS mart.mart_mrr_over_time CASCADE;
 
-
--- staging_subscription_periods
-DROP TABLE IF EXISTS staging.staging_subscription_periods CASCADE;
-CREATE TABLE staging.staging_subscription_periods AS
-SELECT
-    subscription_id,
-    account_id,
-    plan_tier,
-    seats,
-    mrr_amount,
-    arr_amount,
-    start_date,
-    end_date,
-    billing_frequency,
-    is_trial,
-    upgrade_flag,
-    downgrade_flag,
-    churn_flag,
-    CASE
-        WHEN end_date IS NULL THEN TRUE
-        ELSE FALSE
-    END AS is_active
-FROM raw.raw_subscriptions;
-
-
--- staging_months
-DROP TABLE IF EXISTS staging.staging_months CASCADE;
-CREATE TABLE staging.staging_months AS
-WITH minmax AS (
+CREATE TABLE mart.mart_mrr_over_time AS
+WITH acct_bounds AS (
     SELECT
-        MIN(start_date) AS min_date,
-        COALESCE(MAX(end_date), CURRENT_DATE) AS max_date
+        account_id,
+        date_trunc('month', MIN(start_date))::date AS min_month,
+        date_trunc('month', COALESCE(MAX(end_date), CURRENT_DATE))::date AS max_month
     FROM staging.staging_subscription_periods
+    GROUP BY 1
 ),
-dates AS (
+acct_month_grid AS (
     SELECT
-        generate_series(
-            date_trunc('month', min_date),
-            date_trunc('month', max_date),
-            interval '1 month'
-        )::date AS month_start
-    FROM minmax
+        b.account_id,
+        m.month_start AS month
+    FROM acct_bounds b
+    JOIN staging.staging_months m
+      ON m.month_start BETWEEN b.min_month AND b.max_month
+),
+acct_mrr AS (
+    SELECT
+        account_id,
+        month,
+        SUM(mrr_amount)::numeric AS mrr
+    FROM staging.staging_subscription_months
+    GROUP BY 1,2
+),
+acct_mrr_filled AS (
+    SELECT
+        g.account_id,
+        g.month,
+        COALESCE(a.mrr, 0)::numeric AS mrr
+    FROM acct_month_grid g
+    LEFT JOIN acct_mrr a
+      ON a.account_id = g.account_id
+     AND a.month = g.month
+),
+acct_deltas AS (
+    SELECT
+        account_id,
+        month,
+        mrr,
+        LAG(mrr) OVER (PARTITION BY account_id ORDER BY month) AS prev_mrr,
+        mrr - LAG(mrr) OVER (PARTITION BY account_id ORDER BY month) AS delta
+    FROM acct_mrr_filled
+),
+monthly AS (
+    SELECT
+        month,
+
+        -- starting MRR is last month's ending MRR
+        SUM(COALESCE(prev_mrr, 0)) AS starting_mrr,
+
+        -- new: prev was 0, now > 0
+        SUM(CASE WHEN COALESCE(prev_mrr, 0) = 0 AND mrr > 0 THEN mrr ELSE 0 END) AS new_mrr,
+
+        -- expansion: both months > 0, delta positive
+        SUM(CASE WHEN COALESCE(prev_mrr, 0) > 0 AND mrr > 0 AND delta > 0 THEN delta ELSE 0 END) AS expansion_mrr,
+
+        -- contraction: both months > 0, delta negative (store positive number)
+        SUM(CASE WHEN COALESCE(prev_mrr, 0) > 0 AND mrr > 0 AND delta < 0 THEN -delta ELSE 0 END) AS contraction_mrr,
+
+        -- churn: prev > 0, now = 0 (churned MRR equals what you lost)
+        SUM(CASE WHEN COALESCE(prev_mrr, 0) > 0 AND mrr = 0 THEN prev_mrr ELSE 0 END) AS churned_mrr,
+
+        SUM(mrr) AS ending_mrr
+    FROM acct_deltas
+    GROUP BY 1
 )
-SELECT month_start FROM dates;
-
-
--- staging_subscription_months
-DROP TABLE IF EXISTS staging.staging_subscription_months CASCADE;
-CREATE TABLE staging.staging_subscription_months AS
 SELECT
-    p.subscription_id,
-    p.account_id,
-    p.plan_tier,
-    p.mrr_amount      AS mrr_amount,
-    m.month_start     AS month,
-    p.billing_frequency,
-    p.is_trial,
-    p.upgrade_flag,
-    p.downgrade_flag,
-    p.churn_flag,
+    month,
+    starting_mrr,
+    new_mrr,
+    expansion_mrr,
+    contraction_mrr,
+    churned_mrr,
+    (new_mrr + expansion_mrr - contraction_mrr - churned_mrr) AS net_new_mrr,
+    ending_mrr,
     CASE
-        WHEN date_trunc('month', p.start_date) = m.month_start THEN TRUE
-        ELSE FALSE
-    END AS is_new_mrr_month,
-    CASE
-        WHEN p.end_date IS NOT NULL
-         AND date_trunc('month', p.end_date) = m.month_start THEN TRUE
-        ELSE FALSE
-    END AS is_churned_mrr_month
-FROM staging.staging_subscription_periods p
-JOIN staging.staging_months m
-  ON m.month_start BETWEEN date_trunc('month', p.start_date)
-                      AND date_trunc('month', COALESCE(p.end_date, CURRENT_DATE));
+        WHEN starting_mrr = 0 THEN 0
+        ELSE churned_mrr / NULLIF(starting_mrr, 0)
+    END AS gross_revenue_churn_rate
+FROM monthly
+ORDER BY month;

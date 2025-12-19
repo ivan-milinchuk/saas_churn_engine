@@ -1,4 +1,4 @@
-# RavenStack SaaS MRR & Churn
+# SaaS MRR & Churn Engine
 
 Small data engineering project on top of the RavenStack SaaS dataset.
 
@@ -102,6 +102,7 @@ It prints the first few rows from `mart.mart_mrr_over_time`.
 ---
 
 ## Main output
+Computes monthly MRR movements: new, expansion, contraction, churn, plus gross revenue churn rate (account-level month-over-month deltas for expansion/contraction).
 
 Main mart:
 
